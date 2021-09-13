@@ -1,0 +1,70 @@
+import os
+os.environ['CUDA_VISIBLE_DEVICES'] = '8,10,11,12,13,14,15'
+import argparse
+from multiprocessing import cpu_count
+from pathlib import Path
+
+import utils
+from dataset import create_datasets, create_loaders
+from coco_dataset import *
+from trainer import TrainerVideoText
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        '--config', type=str, default='./config/anet_coot.yaml',
+        help='Experiment to run')
+    parser.add_argument(
+        '--workers', type=int, default=None,
+        help='set number of workers (default #CPUs - 1)')
+    parser.add_argument(
+        '--log_dir', type=str, default="./runs/anet_coot",
+        help='directory to save/load the runs and logs')
+    parser.add_argument(
+        "--dataroot", type=str, default="../data",
+        help="change datasets root path")
+    parser.add_argument(
+        "--cuda", action="store_true", default=True, help="train on GPUs")
+    parser.add_argument(
+        "--single_gpu", action="store_true", help="Disable multi-GPU")
+    parser.add_argument(
+        "--preload_vid", action="store_true", default=True,
+        help="Load video features into RAM")
+    parser.add_argument(
+        "--no_preload_text", action="store_true", default=False,
+        help="Do not load text features into RAM")
+    args = parser.parse_args()
+    print(args)
+    cfg = utils.load_config(args.config)
+    if cfg.training.random_seed is not None:
+        print('Random seed: {:d}'.format(cfg.training.random_seed))
+        utils.set_seed(cfg.training.random_seed)
+    num_workers = min(
+        10, cpu_count() - 1) if args.workers is None else args.workers
+    print(f"{num_workers} parallel dataloader workers")
+
+    dataset_path = Path(args.dataroot)
+    train_set, val_set = create_datasets(
+        dataset_path, cfg, args.preload_vid, not args.no_preload_text)
+    train_loader, val_loader = create_loaders(
+        train_set, val_set, cfg.training.batch_size, num_workers)
+    # img_set = ImgDatasetFeatures('../data/sbuFeatures.hdf5', '../data/sbu_text_features.hdf5',
+    #     '../data/sbu_train_image_caption.id', '../data/sbu_train_caption.tsv')
+    img_set = ImgDatasetFeatures('../data/cocoFeatures.hdf5', '../data/coco_text_features.hdf5', '../data/coco_text.json')
+    img_loader = data.DataLoader(
+        img_set, batch_size=64, shuffle=True,
+        num_workers=1, collate_fn=img_set.collate_fn,
+        pin_memory=True)
+    trainer = TrainerVideoText(
+        args.log_dir, cfg, args.cuda, args.cuda and not args.single_gpu)
+    trainer.shuffle_loop(train_loader, val_loader, img_loader)
+    trainer.logger.info("---------- Results ----------")
+    utils.print_csv_results(
+        trainer.log_dir / "train_metrics.csv", cfg,
+        print_fn=trainer.logger.info)
+    trainer.close()
+
+
+if __name__ == '__main__':
+    main()
